@@ -315,4 +315,11 @@ func init() {
 		showCmdOptionInterface,
 		showCmdOptionVerbose,
 	)
+	sdc.RegisterCliPath(
+		[]string{"SHOW", "queue", "watermark"},
+		getQueueUserWatermarks,
+		nil,
+		showCmdOptionInterfaces,
+		sdc.RequiredOption(showCmdOptionQueueType),
+	)
 }
