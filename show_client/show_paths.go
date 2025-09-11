@@ -470,7 +470,15 @@ func init() {
 		sdc.UnimplementedOption(showCmdOptionNamespace),
 		showCmdOptionJson,
 	)
-
+	sdc.RegisterCliPath(
+		[]string{"SHOW", "ipv6", "prefix-list"},
+		getIPv6PrefixList,
+		"SHOW/ipv6/prefix-list/{prefix_list_name}[OPTIONS]: Show IPv6 prefix-lists",
+		0,
+		1,
+		nil,
+		showCmdOptionVerbose,
+	)
 	// SHOW/reboot-cause
 	sdc.RegisterCliPath(
 		[]string{"SHOW", "reboot-cause"},
