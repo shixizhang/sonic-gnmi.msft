@@ -573,4 +573,23 @@ func init() {
 		0,
 		nil,
 	)
+	sdc.RegisterCliPath(
+		[]string{"SHOW", "interfaces", "portchannel"},
+		getInterfacePortchannel,
+		"SHOW/interfaces/portchannel[OPTIONS]: Show interface portchannel",
+		0,
+		0,
+		nil,
+		showCmdOptionVerbose,
+		showCmdOptionSonicCliIfaceMode,
+	)
+	sdc.RegisterCliPath(
+		[]string{"SHOW", "ecn"},
+		getEcnProfiles,
+		"SHOW/ecn[OPTIONS]: Show ECN profiles",
+		0,
+		0,
+		nil,
+		showCmdOptionVerbose,
+	)
 }
