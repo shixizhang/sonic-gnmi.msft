@@ -416,9 +416,18 @@ func init() {
 		map[string]string{
 			"summary": "show/processes/summary: Show processses info",
 			"cpu":     "show/processes/cpu: Show processes CPU info",
-			"mem":     "show/processes/mem: Show processes memory info",
+			"memory":  "show/processes/memory: Show processes information sorted by memory usage",
 		},
 	)
+        sdc.RegisterCliPath(
+                []string{"SHOW", "processes", "memory"},
+                getTopMemoryUsage,
+                "SHOW/processes/memory[OPTIONS]: Show processes information sorted by memory usage",
+                0,
+                0,
+                nil,
+                showCmdOptionVerbose,
+        )
 	sdc.RegisterCliPath(
 		[]string{"SHOW", "processes", "summary"},
 		getProcessesSummary,
