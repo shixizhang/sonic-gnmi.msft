@@ -254,7 +254,8 @@ func init() {
 		0,
 		1,
 		nil,
-		showCmdOptionInterface, // TODO
+		showCmdOptionVerbose,
+		sdc.UnimplementedOption(showCmdOptionNamespace),
 	)
 	sdc.RegisterCliPath(
 		[]string{"SHOW", "interfaces", "transceiver", "lpmode"},
