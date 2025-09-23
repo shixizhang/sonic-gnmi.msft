@@ -412,6 +412,18 @@ func init() {
 		showCmdOptionVerbose,
 	)
 
+	// SHOW/ndp
+	sdc.RegisterCliPath(
+		[]string{"SHOW", "ndp"},
+		getNDP,
+		"SHOW/ndp/{IP6ADDRESS}[OPTIONS]: Show IPv6 Neighbour table",
+		0,
+		1,
+		nil,
+		showCmdOptionIface,
+		showCmdOptionVerbose,
+	)
+
 	// SHOW/processes
 	sdc.RegisterCliPath(
 		[]string{"SHOW", "processes"},
@@ -734,14 +746,14 @@ func init() {
 	)
 
 	//SHOW/arp
-        sdc.RegisterCliPath(
-                []string{"SHOW", "arp"},
-                getArpTable,
-                "SHOW/arp/{ipaddress}[OPTIONS]: Show IP ARP table",
-                0,
-                2,
-                nil,
-                showCmdOptionSonicCliIfaceMode,
-                showCmdOptionIface,
+	sdc.RegisterCliPath(
+		[]string{"SHOW", "arp"},
+		getArpTable,
+		"SHOW/arp/{ipaddress}[OPTIONS]: Show IP ARP table",
+		0,
+		2,
+		nil,
+		showCmdOptionSonicCliIfaceMode,
+		showCmdOptionIface,
 	)
 }
