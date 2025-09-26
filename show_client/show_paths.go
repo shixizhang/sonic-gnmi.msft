@@ -440,6 +440,7 @@ func init() {
 		1,
 		nil,
 		showCmdOptionVerbose,
+		showCmdOptionSonicCliIfaceMode,
 	)
 	sdc.RegisterCliPath(
 		[]string{"SHOW", "lldp", "table"},
@@ -449,6 +450,7 @@ func init() {
 		0,
 		nil,
 		showCmdOptionVerbose,
+		showCmdOptionSonicCliIfaceMode,
 	)
 
 	// SHOW/mac
