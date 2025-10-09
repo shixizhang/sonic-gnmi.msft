@@ -2,28 +2,33 @@ package show_client
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/sonic-net/sonic-gnmi/show_client/common"
 	sdc "github.com/sonic-net/sonic-gnmi/sonic_data_client"
 )
 
-// Struct to represent each ARP entry
-type ArpEntry struct {
+type ARPEntry struct {
 	Address    string `json:"address"`
 	MacAddress string `json:"mac_address"`
 	Iface      string `json:"iface"`
 	Vlan       string `json:"vlan"`
 }
 
+type ARPResponse struct {
+	Entries         []ARPEntry `json:"entries"`
+	TotalEntryCount int        `json:"total_entries"`
+}
+
 var (
-	CmdPrefix         = "nbrshow -4"
-	IPFlag            = "-ip"
-	IFaceFlag         = "-if"
-	OutputFieldsCount = 4
+	CmdPrefix = "/usr/sbin/arp -n"
+	IFaceFlag = "-i"
 )
 
-func getArpTable(args sdc.CmdArgs, options sdc.OptionMap) ([]byte, error) {
+func getARP(args sdc.CmdArgs, options sdc.OptionMap) ([]byte, error) {
 	namingModeStr, _ := options[SonicCliIfaceMode].String()
 	namingMode, err := common.ParseInterfaceNamingMode(namingModeStr)
 	if err != nil {
@@ -36,7 +41,7 @@ func getArpTable(args sdc.CmdArgs, options sdc.OptionMap) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		cmd += " " + IPFlag + " " + ip.String()
+		cmd += " " + ip.String()
 	}
 
 	if ifaceVal, ok := options["iface"]; ok {
@@ -52,38 +57,112 @@ func getArpTable(args sdc.CmdArgs, options sdc.OptionMap) ([]byte, error) {
 		}
 	}
 
-	output, err := common.GetDataFromHostCommand(cmd)
+	rawOutput, err := common.GetDataFromHostCommand(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(rawOutput) == "" {
+		return []byte(`{"entries":[],"total_entries":0}`), nil
+	}
+	nbrdata := parseNbrData(rawOutput)
+
+	fdbEntries, err := common.FetchFDBData()
 	if err != nil {
 		return nil, err
 	}
 
-	lines := strings.Split(output, "\n")
-	entries := []ArpEntry{}
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		fields := strings.Fields(line)
+	entries := mergeNbrWithFDB(nbrdata, fdbEntries)
 
-		// Skip headers, separators, summaries, or malformed lines
-		if len(fields) < OutputFieldsCount ||
-			strings.HasPrefix(fields[0], "-") ||
-			strings.Contains(line, "Address") ||
-			strings.Contains(line, "Total number of entries") {
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Address < entries[j].Address
+	})
+
+	response := ARPResponse{
+		Entries:         entries,
+		TotalEntryCount: len(entries),
+	}
+
+	if response.Entries == nil {
+		response.Entries = []ARPEntry{}
+	}
+
+	return json.Marshal(response)
+}
+
+func parseNbrData(output string) [][]string {
+	var nbrdata [][]string
+	lines := strings.Split(output, "\n")
+	if len(lines) <= 1 {
+		return nbrdata
+	}
+	for _, line := range lines[1:] {
+		if !strings.Contains(line, "ether") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		var address, mac, iface string
+		address = fields[0]
+		for i, f := range fields {
+			if f == "ether" && i+1 < len(fields) {
+				mac = fields[i+1]
+			}
+		}
+		iface = fields[len(fields)-1]
+		nbrdata = append(nbrdata, []string{address, mac, iface})
+	}
+	return nbrdata
+}
+
+func mergeNbrWithFDB(nbrdata [][]string, fdbEntries []common.BridgeMacEntry) []ARPEntry {
+	var output []ARPEntry
+	vlanRe := regexp.MustCompile(`^Vlan(\d+)$`)
+
+	// Build lookup map: key = "vlanID|MAC", value = IfName
+	lookup := make(map[string]string)
+	for _, fdb := range fdbEntries {
+		key := fmt.Sprintf("%d|%s", fdb.VlanID, strings.ToUpper(fdb.Mac))
+		lookup[key] = fdb.IfName
+	}
+
+	for _, ent := range nbrdata {
+		if len(ent) < 3 {
 			continue
 		}
 
-		for i := range fields {
-			fields[i] = strings.TrimSpace(fields[i])
-		}
+		vlan := "-"
+		if vlanRe.MatchString(ent[2]) {
+			match := vlanRe.FindStringSubmatch(ent[2])
+			if len(match) < 2 {
+				continue
+			}
+			vlanid := match[1]
+			mac := strings.ToUpper(ent[1])
+			key := fmt.Sprintf("%s|%s", vlanid, mac)
+			port, ok := lookup[key]
+			if !ok {
+				port = "-"
+			}
 
-		entries = append(entries, ArpEntry{
-			Address:    fields[0],
-			MacAddress: fields[1],
-			Iface:      fields[2],
-			Vlan:       fields[3],
-		})
+			entry := ARPEntry{
+				Address:    ent[0],
+				MacAddress: ent[1],
+				Iface:      port,
+				Vlan:       vlanid,
+			}
+			output = append(output, entry)
+		} else {
+			entry := ARPEntry{
+				Address:    ent[0],
+				MacAddress: ent[1],
+				Iface:      ent[2],
+				Vlan:       vlan,
+			}
+			output = append(output, entry)
+		}
 	}
 
-	return json.Marshal(map[string][]ArpEntry{
-		"arp_entries": entries,
-	})
+	return output
 }

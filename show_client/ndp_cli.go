@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -33,12 +32,12 @@ show ndp [OPTIONS] [IP6ADDRESS] -> nbrshow -6 [-ip IPADDR] [-if IFACE] -> ip -6 
 admin@str4-7060x6-512-1:~$ show ndp --help
 Usage: show ndp [OPTIONS] [IP6ADDRESS]
 
-  Show IPv6 Neighbour table
+Show IPv6 Neighbour table
 
 Options:
-  -if, --iface TEXT
-  --verbose          Enable verbose output
-  -h, -?, --help     Show this message and exit.
+-if, --iface TEXT
+--verbose          Enable verbose output
+-h, -?, --help     Show this message and exit.
 admin@str4-7060x6-512-1:~$ /bin/ip -6 neigh show fc00::5a2 dev Ethernet360 lladdr 0a:80:32:98:97:95 router REACHABLE fe80::d494:e8ff:fe96:e188 dev Ethernet392 lladdr d6:94:e8:96:e1:88 REACHABLE fc00::202 dev Ethernet128 lladdr a6:da:cf:f5:6a:e6 router REACHABLE fe80::7a5f:6cff:fe30:d7dc dev Vlan1000 lladdr 78:5f:6c:30:d7:dc router STALE fe80::bace:f6ff:fee5:51c0 dev Vlan1000 lladdr b8:ce:f6:e5:51:c0 REACHABLE fe80::acaf:aeff:fe2e:4080 dev Ethernet128 lladdr ae:af:ae:2e:40:80 REACHABLE fe80::bace:f6ff:fee5:51c8 dev Vlan1000 lladdr b8:ce:f6:e5:51:c8 REACHABLE fe80::7c4f:56ff:feb2:61b8 dev Ethernet440 lladdr 7e:4f:56:b2:61:b8
 admin@str4-7060x6-512-2:~$ show ndp
 Address                       MacAddress         Iface           Vlan    Status
@@ -58,20 +57,14 @@ var (
 	baseNdpCmd = "/bin/ip -6 neigh show"
 )
 
-type BridgeMacEntry struct {
-	VlanID int
-	Mac    string
-	IfName string
-}
-
 func parseNDPOutput(output string, intf string) NeighborTable {
 	table := NeighborTable{}
 
 	// Fetch FDB entries
-	bridgeMacList, err := fetchFdbData()
+	bridgeMacList, err := common.FetchFDBData()
 	if err != nil {
 		log.Warningf("Failed to fetch FDB data: %v", err)
-		bridgeMacList = []BridgeMacEntry{} // fallback to empty
+		bridgeMacList = []common.BridgeMacEntry{} // fallback to empty
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -137,250 +130,6 @@ func parseNDPOutput(output string, intf string) NeighborTable {
 
 	table.TotalEntries = len(table.Entries)
 	return table
-}
-
-func getInterfaceOidMap() (map[string]string, error) {
-	portQueries := [][]string{
-		{"COUNTERS_DB", "COUNTERS_PORT_NAME_MAP"},
-	}
-	lagQueries := [][]string{
-		{"COUNTERS_DB", "COUNTERS_LAG_NAME_MAP"},
-	}
-
-	portMap, err := common.GetMapFromQueries(portQueries)
-	if err != nil {
-		return nil, err
-	}
-	lagMap, err := common.GetMapFromQueries(lagQueries)
-	if err != nil {
-		return nil, err
-	}
-
-	// SONiC interface regex patterns
-	ethRe := regexp.MustCompile(`^Ethernet(\d+)$`)
-	lagRe := regexp.MustCompile(`^PortChannel(\d+)$`)
-	vlanRe := regexp.MustCompile(`^Vlan(\d+)$`)
-	mgmtRe := regexp.MustCompile(`^eth(\d+)$`)
-
-	ifOidMap := make(map[string]string)
-
-	// helper closure to check valid names
-	isValidIfName := func(name string) bool {
-		return ethRe.MatchString(name) ||
-			lagRe.MatchString(name) ||
-			vlanRe.MatchString(name) ||
-			mgmtRe.MatchString(name)
-	}
-
-	for portName, oidVal := range portMap {
-		oidStr, ok := oidVal.(string)
-		if !ok || len(oidStr) <= oidPrefixLen {
-			continue
-		}
-		if isValidIfName(portName) {
-			ifOidMap[oidStr[oidPrefixLen:]] = portName
-		}
-	}
-	for lagName, oidVal := range lagMap {
-		oidStr, ok := oidVal.(string)
-		if !ok || len(oidStr) <= oidPrefixLen {
-			continue
-		}
-		if isValidIfName(lagName) {
-			ifOidMap[oidStr[oidPrefixLen:]] = lagName
-		}
-	}
-
-	return ifOidMap, nil
-}
-
-func buildBvidToVlanMap() (map[string]string, error) {
-	queries := [][]string{
-		{"ASIC_DB", "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:*"},
-	}
-
-	vlanData, err := common.GetMapFromQueries(queries)
-	if err != nil {
-		return nil, err
-	}
-
-	const prefix = "SAI_OBJECT_TYPE_VLAN:"
-	result := make(map[string]string)
-
-	for key, val := range vlanData {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
-
-		bvid := strings.TrimPrefix(key, prefix) // "oid:..."
-
-		ent, ok := val.(map[string]interface{})
-		if !ok {
-			log.Warningf("Unexpected format for VLAN entry %s: %#v", key, val)
-			continue
-		}
-
-		if vlanIDRaw, ok := ent["SAI_VLAN_ATTR_VLAN_ID"]; ok {
-			if vlanIDStr, ok := vlanIDRaw.(string); ok {
-				result[bvid] = vlanIDStr
-			}
-		}
-	}
-
-	return result, nil
-}
-
-func getVlanIDFromBvid(bvid string, bvidMap map[string]string) (string, error) {
-	if vlanID, ok := bvidMap[bvid]; ok {
-		return vlanID, nil
-	}
-	return "", fmt.Errorf("BVID %s not found in VLAN map", bvid)
-}
-
-func getBridgePortMap() (map[string]string, error) {
-	queries := [][]string{
-		{"ASIC_DB", "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*"},
-	}
-	brPortStr, err := common.GetMapFromQueries(queries)
-	if err != nil {
-		return nil, err
-	}
-	log.V(6).Infof("SAI_OBJECT_TYPE_BRIDGE_PORT data from query: %v", brPortStr)
-
-	ifBrOidMap := make(map[string]string)
-
-	// key SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x2600000000063f
-	for key, val := range brPortStr {
-		parts := strings.SplitN(key, ":", 2)
-		if len(parts) < 2 {
-			continue
-		}
-		if len(parts[1]) < oidPrefixLen {
-			// not long enough to contain "oid:0x...", skip
-			continue
-		}
-		bridgePortOid := parts[1][oidPrefixLen:] // strip "oid:0x"
-
-		attrs, ok := val.(map[string]string)
-		if !ok {
-			// sometimes it might be map[string]interface{}, so try that
-			if m, ok2 := val.(map[string]interface{}); ok2 {
-				attrs = make(map[string]string)
-				for k, v := range m {
-					attrs[k] = fmt.Sprintf("%v", v)
-				}
-			} else {
-				log.Warningf("Unexpected type for attrs: %T", val)
-				continue
-			}
-		}
-		// attrs is map[string]string
-		portIdRaw, ok := attrs["SAI_BRIDGE_PORT_ATTR_PORT_ID"]
-		if !ok {
-			continue
-		}
-		portId := portIdRaw[oidPrefixLen:] // strip "oid:0x"
-		// Map bridge port OID to port ID
-		ifBrOidMap[bridgePortOid] = portId
-	}
-	return ifBrOidMap, nil
-}
-
-func fetchFdbData() ([]BridgeMacEntry, error) {
-	queries := [][]string{
-		{"ASIC_DB", "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:*"},
-	}
-
-	// "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\"oid:0x2600000000063f\",\"mac\":\"B8:CE:F6:E5:50:05\",\"switch_id\":\"oid:0x21000000000000\"}"
-	brPortStr, err := common.GetMapFromQueries(queries)
-	if err != nil {
-		return nil, err
-	}
-	log.V(6).Infof("FDB_ENTRY list: %v", brPortStr)
-
-	ifOidMap, err := getInterfaceOidMap()
-	if err != nil {
-		return nil, err
-	}
-
-	ifBrOidMap, err := getBridgePortMap()
-	if err != nil {
-		return nil, err
-	}
-
-	if ifBrOidMap == nil || ifOidMap == nil {
-		return nil, fmt.Errorf("bridge/port maps not initialized")
-	}
-
-	bvidMap, err := buildBvidToVlanMap()
-	if err != nil {
-		log.Warningf("Failed to build BVID map: %v", err)
-		return nil, err
-	}
-
-	bridgeMacList := []BridgeMacEntry{}
-
-	// fdbKey is like SAI_OBJECT_TYPE_FDB_ENTRY:{"bvid":"oid:0x2600000000063f","mac":"B8:CE:F6:E5:50:05","switch_id":"oid:0x21000000000000"}
-	for fdbKey, entryData := range brPortStr {
-		// Split at first colon to separate top-level type from JSON
-		idx := strings.Index(fdbKey, ":")
-		if idx == -1 || idx+1 >= len(fdbKey) {
-			continue
-		}
-		fdbJSON := fdbKey[idx+1:] // everything after the first colon
-
-		fdb := map[string]string{}
-		if err := json.Unmarshal([]byte(fdbJSON), &fdb); err != nil {
-			continue
-		}
-
-		// Attributes map
-		ent, ok := entryData.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		brPortOidRaw, ok := ent["SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID"].(string)
-		if !ok || len(brPortOidRaw) <= oidPrefixLen {
-			continue
-		}
-		brPortOid := brPortOidRaw[oidPrefixLen:]
-
-		portID, ok := ifBrOidMap[brPortOid]
-		if !ok {
-			continue
-		}
-
-		ifName, ok := ifOidMap[portID]
-		if !ok {
-			ifName = portID
-		}
-
-		var vlanIDStr string
-		if v, ok := fdb["vlan"]; ok {
-			vlanIDStr = v
-		} else if bvid, ok := fdb["bvid"]; ok {
-			vlanIDStr, err = getVlanIDFromBvid(bvid, bvidMap)
-			if err != nil || vlanIDStr == "" {
-				continue
-			}
-		} else {
-			continue
-		}
-
-		vlanID, err := strconv.Atoi(vlanIDStr)
-		if err != nil {
-			continue
-		}
-
-		bridgeMacList = append(bridgeMacList, BridgeMacEntry{
-			VlanID: vlanID,
-			Mac:    fdb["mac"],
-			IfName: ifName,
-		})
-	}
-
-	return bridgeMacList, nil
 }
 
 func getNDP(args sdc.CmdArgs, options sdc.OptionMap) ([]byte, error) {
